@@ -1,18 +1,24 @@
 #!/usr/bin/env python
-
-# Thread aus liste entfernen wenn ende
-
 import pyvjoy
 import socket
-import threading
-import time
 import re
+import pyautogui  # For mouse control
 
-buttonsPerClient = 3
+# Settings
+buttonsPerClient = 16
 axisPerClient = 2
+host = "0.0.0.0"
+port = 9999
 
+# Create the vJoy device
 j = pyvjoy.VJoyDevice(1)
 
+# Regex pattern for updated input format: <buttons;cpadX;cpadY;touchActive;touchX;touchY>
+pattern = re.compile(r'<(\d+);\s*(\d+);\s*(\d+);\s*(\d+);\s*(\d+);\s*(\d+)>')
+
+# Get screen dimensions for scaling touch input
+screen_width, screen_height = pyautogui.size()
+touch_width, touch_height = 320, 240  # 3DS bottom screen dimensions
 
 def setAxis(axis, value):
     match axis:
@@ -33,85 +39,103 @@ def setAxis(axis, value):
         case 8:
             j.data.wDial = value
         case _:
-            print("ERROR: Unknown axis: ", axis)
+            print("ERROR: Unknown axis:", axis)
 
+# UDP socket setup
+sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+sock.bind((host, port))
+print(f"UDP server listening on {host}:{port}")
 
-class ClientThread(threading.Thread):
+# Client tracking dictionary
+clients = {}
 
-    def __init__(self, ip, port, socket, status, offsetB, offsetA):
-        threading.Thread.__init__(self)
-        self.ip = ip
-        self.port = port
-        self.socket = socket
-        self.status = status
-        self.offsetB = offsetB
-        self.offsetA = offsetA
-        print("[+] New thread started for " + ip + ":" + str(port))
+# Button mapping constants
+BTN_A = 1 << 0
+BTN_B = 1 << 1
+BTN_X = 1 << 2
+BTN_Y = 1 << 3
+BTN_DUP = 1 << 4
+BTN_DDOWN = 1 << 5
+BTN_DLEFT = 1 << 6
+BTN_DRIGHT = 1 << 7
+BTN_L = 1 << 8
+BTN_R = 1 << 9
+BTN_SELECT = 1 << 10
+BTN_START = 1 << 11
 
-    def run(self):
-        print("Connection from : " + ip + ":" + str(port))
-
-        self.socket.send(b"\nWelcome to the server\n\n")
-
-        data = "not empty"
-        leftover = ""
-        pattern = r'^<\d+;\s*\d+;\s*\d+>'
-
-        while True:
-            print("Waiting for data")
-            data = self.socket.recv(25).decode("utf-8")
-            print("Client sent:" + str(data))
-            data = leftover + data
-            print("Concatenated:" + str(data))
-            # Check if packet contains d
-            if "d" in data:
-                break
-            matches = re.findall(pattern, str(data))
-            packet = ""
-            if len(matches) > 0:
-                packet = matches[0]
-                print("Packet:" + str(packet))
-
-            leftover = data.replace(packet, "")
-            print("Leftover: " + str(leftover))
-            if packet == "":
-                print("No full packet received")
-                continue
-            curr_pack = packet.rstrip(">").lstrip("<")
-            print("Current packet:" + curr_pack)
-            try:
-                split = curr_pack.split(";")
-            except:
-                print("Split Error")
-            print("Processed:" + str(split))
-            buttons = int(split[0])
-            if buttons > pow(2, buttonsPerClient):
-                continue
-            j.data.lButtons = j.data.lButtons & ~((pow(2, buttonsPerClient) - 1) << self.offsetB)  # reset
-            j.data.lButtons = j.data.lButtons | (buttons << self.offsetB)  # set
-
-            for i in range(1, axisPerClient+1):
-                setAxis(i+self.offsetA, int(split[i]))
-            j.update()
-            time.sleep(0.1)
-
-        print("Client disconnected...")
-        threads.remove(self)
-
-
-host = "0.0.0.0"
-port = 9999
-
-tcpsock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-tcpsock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-
-tcpsock.bind((host, port))
-threads = []
-
+# Main server loop
 while True:
-    tcpsock.listen()
-    print("\nListening for incoming connections...")
-    (clientsock, (ip, port)) = tcpsock.accept()
-    newthread = ClientThread(ip, port, clientsock, False, len(threads)*buttonsPerClient, len(threads)*axisPerClient)
-    newthread.start()
-    threads.append(newthread)
+    try:
+        data, addr = sock.recvfrom(1024)
+        if not data:
+            continue
+            
+        # Convert bytes to string
+        data_str = data.decode('utf-8')
+        
+        # Check if disconnect message
+        if data_str == "d":
+            if addr in clients:
+                print(f"Client disconnected: {addr[0]}:{addr[1]}")
+                del clients[addr]
+            continue
+            
+        # Parse the input data
+        match = pattern.match(data_str)
+        if match:
+            if addr not in clients:
+                # New client
+                client_id = len(clients)
+                clients[addr] = client_id
+                offsetB = client_id * buttonsPerClient
+                offsetA = client_id * axisPerClient
+                print(f"New client: {addr[0]}:{addr[1]} (ID: {client_id})")
+            else:
+                client_id = clients[addr]
+                offsetB = client_id * buttonsPerClient
+                offsetA = client_id * axisPerClient
+                
+            # Parse values from the input string
+            buttons = int(match.group(1))
+            cpad_x = int(match.group(2))
+            cpad_y = int(match.group(3))
+            touch_active = int(match.group(4)) == 1
+            touch_x = int(match.group(5))
+            touch_y = int(match.group(6))
+            
+            # Apply button inputs to vJoy
+            # First clear and set face buttons (A,B,X,Y)
+            j.data.lButtons &= ~(((1 << buttonsPerClient) - 1) << offsetB)
+            j.data.lButtons |= (buttons << offsetB)
+            
+            # Set circle pad axes
+            setAxis(1 + offsetA, cpad_x)
+            # Invert Y-axis for circle pad
+            setAxis(2 + offsetA, 32768 - cpad_y)
+            
+            # Handle touchscreen input as mouse
+            if touch_active:
+                # Scale touch screen coordinates to monitor resolution
+                mouse_x = int((touch_x / touch_width) * screen_width)
+                mouse_y = int((touch_y / touch_height) * screen_height)
+                
+                # Move mouse pointer
+                pyautogui.moveTo(mouse_x, mouse_y)
+                
+                # Optional: handle touches as mouse clicks
+                # For example, could implement L as left click, R as right click
+                if buttons & BTN_L:
+                    pyautogui.mouseDown(button='left')
+                else:
+                    pyautogui.mouseUp(button='left')
+                    
+                if buttons & BTN_R:
+                    pyautogui.mouseDown(button='right')
+                else:
+                    pyautogui.mouseUp(button='right')
+            
+            # Update the controller state
+            j.update()
+            
+    except Exception as e:
+        print(f"Error: {e}")
