@@ -1,0 +1,1 @@
+this makes the joystick a bit less precise to send less packets, and makes the touch functionality a bit smoother. it also introduces extra diagnostic tools on the server side, as well as a bit more user feedback

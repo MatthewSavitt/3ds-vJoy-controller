@@ -19,10 +19,15 @@
 #define SOC_ALIGN       0x1000
 #define SOC_BUFFERSIZE  0x100000
 
-// Touch input optimization settings
-#define TOUCH_THRESHOLD 8      // Minimum pixel change to trigger updates (increased for less sensitivity)
-#define TOUCH_THROTTLE_TIME 33000000  // About 30fps (in system ticks)
-#define CONSOLE_UPDATE_INTERVAL 180000000 // Only update console every ~3 seconds to prevent slowdown
+// Optimization settings
+#define TOUCH_THRESHOLD 10      // Minimum pixel change for touch updates
+#define TOUCH_THROTTLE_TIME 16666667  // About 60fps in system ticks
+#define CPAD_THRESHOLD 5        // Minimum circle pad movement for updates
+#define HELD_INPUT_UPDATE_TIME 200000000 // Send updates for held inputs every ~200ms
+#define CONSOLE_UPDATE_INTERVAL 180000000 // Console update rate
+
+// Reduce circle pad resolution for faster network
+#define CPAD_RESOLUTION 256  // Use 256 steps instead of 32768 (reduces precision by 99%)
 
 static u32 *SOC_buffer = NULL;
 s32 sock = -1, csock = -1;
@@ -37,8 +42,11 @@ u32 konamiCode[KONAMI_CODE_LENGTH] = {
     KEY_B, KEY_A, KEY_START
 };
 int konamiCodeIndex = 0;
+
+// Timing variables
 u64 lastTouchTime = 0;    // For throttling touch updates
 u64 lastConsoleUpdate = 0; // For throttling console output
+u64 lastHeldUpdate = 0;    // For periodic updates on held inputs
 
 __attribute__((format(printf,1,2)))
 void failExit(const char *fmt, ...);
@@ -135,15 +143,20 @@ void buttonsToString(u32 keys, circlePosition pos, touchPosition touch, char* bu
     // Touch status
     bool touchActive = (keys & KEY_TOUCH) != 0;
     
-    // Scale inputs to proper ranges
-    int scaledCPadX = map_range(pos.dx, -160, 160, 0, 32768);
-    int scaledCPadY = map_range(pos.dy, -160, 160, 0, 32768);
+    // Scale inputs with reduced resolution for better performance
+    // Map from -160~160 to 0~CPAD_RESOLUTION, then scale to 0~32768
+    int scaledCPadX = map_range(pos.dx, -160, 160, 0, CPAD_RESOLUTION);
+    int scaledCPadY = map_range(pos.dy, -160, 160, 0, CPAD_RESOLUTION);
+    
+    // Scale back up to 0-32768 range for vJoy
+    scaledCPadX = map_range(scaledCPadX, 0, CPAD_RESOLUTION, 0, 32768);
+    scaledCPadY = map_range(scaledCPadY, 0, CPAD_RESOLUTION, 0, 32768);
     
     // Touch coordinates (only meaningful if touch is active)
     int touchX = touchActive ? touch.px : 0;
     int touchY = touchActive ? touch.py : 0;
     
-    // Format: <buttons;cpadX;cpadY;touchActive;touchX;touchY>
+    // Format with reduced data size: <buttons;cpadX;cpadY;touchActive;touchX;touchY>
     sprintf(buttons, "<%d;%d;%d;%d;%d;%d>", 
             keysFormatted, scaledCPadX, scaledCPadY, 
             touchActive ? 1 : 0, touchX, touchY);
@@ -164,8 +177,8 @@ int main(int argc, char **argv) {
 
     consoleInit(GFX_TOP, NULL);
 
-    printf("\n3DS UDP Controller\n");
-    printf("-----------------\n");
+    printf("\n3DS UDP Controller v2.0\n");
+    printf("-------------------\n");
 
     // allocate buffer for SOC service
     SOC_buffer = (u32*)memalign(SOC_ALIGN, SOC_BUFFERSIZE);
@@ -192,6 +205,12 @@ int main(int argc, char **argv) {
         failExit("UDP socket failed: %d %s\n", errno, strerror(errno));
     }
     printf("Created UDP socket\n");
+    
+    // Set socket send buffer size to improve performance
+    int sendbuf = 8192;
+    if (setsockopt(sock, SOL_SOCKET, SO_SNDBUF, &sendbuf, sizeof(sendbuf)) < 0) {
+        printf("Warning: Could not set socket buffer size\n");
+    }
     
     memset(&serverAddr, 0, sizeof(serverAddr));
     serverAddr.sin_family = AF_INET;
@@ -223,8 +242,10 @@ int main(int argc, char **argv) {
     static bool lastTouchActive = false;
     
     // Initialize time trackers
-    lastTouchTime = svcGetSystemTick();
-    lastConsoleUpdate = svcGetSystemTick();
+    u64 currentTime = svcGetSystemTick();
+    lastTouchTime = currentTime;
+    lastConsoleUpdate = currentTime;
+    lastHeldUpdate = currentTime;
     
     while (aptMainLoop()) {
         gspWaitForVBlank();
@@ -236,9 +257,9 @@ int main(int argc, char **argv) {
         hidTouchRead(&touch);
         
         u32 keys = hidKeysHeld();
-        // Use the function directly instead of storing in a variable named keysDown
         bool touchActive = (keys & KEY_TOUCH) != 0;
         bool shouldSendUpdate = false;
+        currentTime = svcGetSystemTick();
 
         // Check for Konami code using direct function call
         if (checkKonamiCode(hidKeysDown())) {
@@ -248,15 +269,28 @@ int main(int argc, char **argv) {
             break;
         }
     
-        // Always send updates for button changes and circle pad movement
-        if (keys != lastKeys || pos.dx != lastPos.dx || pos.dy != lastPos.dy) {
+        // Always send updates for new button presses or releases
+        if (keys != lastKeys) {
             shouldSendUpdate = true;
+        }
+        
+        // Send updates for significant circle pad movements
+        if (abs(pos.dx - lastPos.dx) > CPAD_THRESHOLD || 
+            abs(pos.dy - lastPos.dy) > CPAD_THRESHOLD) {
+            shouldSendUpdate = true;
+        }
+        
+        // Periodically send updates even for held inputs
+        if (keys != 0 && currentTime - lastHeldUpdate > HELD_INPUT_UPDATE_TIME) {
+            shouldSendUpdate = true;
+            lastHeldUpdate = currentTime;
         }
 
         // For touch, add throttling and threshold checks
         if (touchActive != lastTouchActive) {
             // Always send on touch state change (press/release)
             shouldSendUpdate = true;
+            lastTouchTime = currentTime; // Reset timer on state change
         } else if (touchActive) {
             // For continued touch, use threshold and throttling
             int dx = touch.px - lastTouch.px;
@@ -264,7 +298,6 @@ int main(int argc, char **argv) {
             
             // Use squared distance for performance (avoid sqrt)
             if ((dx*dx + dy*dy) > (TOUCH_THRESHOLD*TOUCH_THRESHOLD)) {
-                u64 currentTime = svcGetSystemTick();
                 if (currentTime - lastTouchTime > TOUCH_THROTTLE_TIME) {
                     shouldSendUpdate = true;
                     lastTouchTime = currentTime;
@@ -273,6 +306,7 @@ int main(int argc, char **argv) {
         }
 
         if (shouldSendUpdate) {
+            // Update last states
             lastKeys = keys;
             lastPos = pos;
             lastTouch = touch;
@@ -286,7 +320,6 @@ int main(int argc, char **argv) {
                          (struct sockaddr*)&serverAddr, sizeof(serverAddr));
             
             // Handle console output - throttle to avoid slowdown
-            u64 currentTime = svcGetSystemTick();
             if (currentTime - lastConsoleUpdate > CONSOLE_UPDATE_INTERVAL) {
                 if (sent < 0) {
                     printf("Send error: %d - %s\n", errno, strerror(errno));
