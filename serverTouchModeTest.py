@@ -6,12 +6,21 @@ import pyautogui
 import time
 import math
 import threading
+import tkinter as tk  # Add this import
+
+# Hide console window (Windows only)
+try:
+    import ctypes
+    ctypes.windll.user32.ShowWindow(ctypes.windll.kernel32.GetConsoleWindow(), 0)
+except:
+    pass  # Not on Windows or error occurred
 
 # Settings
 buttonsPerClient = 16
 axisPerClient = 2
 host = "0.0.0.0"
 port = 9999
+pyautogui.FAILSAFE = False
 
 # Touch/mouse optimization
 mouse_smoothing = 0.6  # Higher = smoother but more latency
@@ -20,7 +29,7 @@ touch_scale_factor = 0.95  # Reduce travel distance slightly for easier access t
 
 # Touch mode settings
 touch_mode_active = False
-touch_mode_smoothing = 0.2  # Much less smoothing for responsiveness
+touch_mode_smoothing = 0.4  # Much less smoothing for responsiveness
 touch_mode_update_interval = 0.0083  # 120fps theoretical
 touch_mode_scale_factor = 1.0  # No scaling - direct mapping
 
@@ -48,23 +57,69 @@ stats_interval = 5.0  # Show stats every 5 seconds
 packet_count = 0
 last_packet_count = 0
 
+# Client tracking dictionary - INITIALIZE HERE
+clients = {}
+
+# 3DS calibration data
+# The actual input ranges from the touchscreen
+touch_min_x = 5
+touch_max_x = 314
+touch_min_y = 5
+touch_max_y = 234
+# The full theoretical range
+touch_width, touch_height = 320, 240  # 3DS bottom screen dimensions
+
 # Create the vJoy device
 j = pyvjoy.VJoyDevice(1)
 
+# Create a simple GUI window to prevent application crashes
+# This will capture mouse events instead of the console
+root = tk.Tk()
+root.title("3DS Controller Server")
+root.geometry("400x300")
+root.resizable(True, True)
+
+# Add some information to the window
+status_label = tk.Label(root, text="Server Running", font=("Arial", 12, "bold"))
+status_label.pack(pady=10)
+
+info_text = tk.Text(root, height=15, width=45)
+info_text.pack(pady=5, padx=5, fill=tk.BOTH, expand=True)
+info_text.insert(tk.END, "3DS Controller Server\n")
+info_text.insert(tk.END, "-----------------------\n")
+info_text.insert(tk.END, "- Buttons and D-pad mapped to vJoy buttons 1-12\n")
+info_text.insert(tk.END, "- Circle pad mapped to X/Y axes with angle compensation\n")
+info_text.insert(tk.END, "- Touchscreen controls mouse movement\n")
+info_text.insert(tk.END, "- L button = left mouse click\n")
+info_text.insert(tk.END, "- R button = right click (in normal mode) or right mouse click (in touch mode)\n")
+info_text.insert(tk.END, "- L+R+Select = Toggle Touch Mode\n")
+info_text.insert(tk.END, f"- Touchscreen calibration: ({touch_min_x},{touch_min_y}) to ({touch_max_x},{touch_max_y})\n\n")
+info_text.insert(tk.END, "Ready for connections...\n")
+info_text.config(state=tk.DISABLED)
+
+# Status display at bottom
+status_display = tk.StringVar()
+status_display.set("Waiting for connections...")
+status_label_bottom = tk.Label(root, textvariable=status_display, bd=1, relief=tk.SUNKEN, anchor=tk.W)
+status_label_bottom.pack(side=tk.BOTTOM, fill=tk.X)
+
 # Print vJoy device info
-print(f"vJoy Device {j.rID} info:")
 try:
-    print(f"Number of buttons: {j.GetVJDButtonNumber()}")
-    print(f"Number of axes: {j.GetVJDAxisNumber()}")
+    info_text.config(state=tk.NORMAL)
+    info_text.insert(tk.END, f"\nvJoy Device {j.rID} info:\n")
+    info_text.insert(tk.END, f"Number of buttons: {j.GetVJDButtonNumber()}\n")
+    info_text.insert(tk.END, f"Number of axes: {j.GetVJDAxisNumber()}\n")
+    info_text.config(state=tk.DISABLED)
 except Exception as e:
-    print(f"Could not get vJoy device info: {e}")
+    info_text.config(state=tk.NORMAL)
+    info_text.insert(tk.END, f"Could not get vJoy device info: {e}\n")
+    info_text.config(state=tk.DISABLED)
 
 # Regex pattern for updated input format: <buttons;cpadX;cpadY;touchActive;touchX;touchY;mode>
 pattern = re.compile(r'<(\d+);\s*(\d+);\s*(\d+);\s*(\d+);\s*(\d+);\s*(\d+);\s*(\d+)>')
 
 # Get screen dimensions for scaling touch input
 screen_width, screen_height = pyautogui.size()
-touch_width, touch_height = 320, 240  # 3DS bottom screen dimensions
 
 def compensate_circle_pad(cpad_x_raw, cpad_y_raw):
     """Compensate circle pad magnitude based on angle"""
@@ -128,15 +183,15 @@ def setAxis(axis, value):
                 j.data.wDial = value
             case _:
                 if debug_mode:
-                    print(f"ERROR: Unknown axis: {axis}")
+                    log_message(f"ERROR: Unknown axis: {axis}")
     except Exception as e:
         if debug_mode:
-            print(f"Error setting axis {axis} to {value}: {e}")
+            log_message(f"Error setting axis {axis} to {value}: {e}")
 
 def setButtons(buttons, offset=0):
     """Set vJoy buttons with enhanced debugging and reliability"""
     try:
-        # If debug mode, print the button values we're trying to set
+        # If debug mode, log the button values we're trying to set
         if debug_mode and buttons > 0:
             btn_names = []
             if buttons & (1 << 0): btn_names.append("A")
@@ -151,7 +206,7 @@ def setButtons(buttons, offset=0):
             if buttons & (1 << 9): btn_names.append("R")
             if buttons & (1 << 10): btn_names.append("Select")
             if buttons & (1 << 11): btn_names.append("Start")
-            print(f"Setting buttons: {buttons:012b} - {', '.join(btn_names) if btn_names else 'None'}")
+            log_message(f"Setting buttons: {buttons:012b} - {', '.join(btn_names) if btn_names else 'None'}")
         
         # Apply button inputs to vJoy using the mask technique from the older code
         # First clear the button state for this client
@@ -163,14 +218,27 @@ def setButtons(buttons, offset=0):
         # Force immediate update
         result = j.update()
         if debug_mode and buttons > 0:
-            print(f"vJoy update result: {result}")
+            log_message(f"vJoy update result: {result}")
             
     except Exception as e:
-        print(f"Error setting buttons: {e}")
-        print(f"Button value that caused error: {buttons:012b} ({buttons})")
+        log_message(f"Error setting buttons: {e}")
+        log_message(f"Button value that caused error: {buttons:012b} ({buttons})")
+
+def normalize_touch_coordinate(x, y):
+    """Normalize touch coordinates to account for calibration differences"""
+    # Normalize x from actual range to 0-1
+    norm_x = (x - touch_min_x) / (touch_max_x - touch_min_x)
+    # Normalize y from actual range to 0-1
+    norm_y = (y - touch_min_y) / (touch_max_y - touch_min_y)
+    
+    # Clamp values to 0-1 range to handle edge cases
+    norm_x = max(0.0, min(1.0, norm_x))
+    norm_y = max(0.0, min(1.0, norm_y))
+    
+    return norm_x, norm_y
 
 def handleMouse(touch_active, touch_x, touch_y, buttons, client_mode=None):
-    """Handle mouse movement and clicks with improved smoothing"""
+    """Handle mouse movement and clicks with improved smoothing and calibration"""
     global last_mouse_x, last_mouse_y, last_mouse_update
     global mouse_l_pressed, mouse_r_pressed, touch_mode_active
     global touch_mode_click_start_time, touch_mode_click_position, touch_mode_last_toggle
@@ -188,9 +256,9 @@ def handleMouse(touch_active, touch_x, touch_y, buttons, client_mode=None):
             # Sync with client mode
             touch_mode_active = client_mode
             if touch_mode_active:
-                print("TOUCH MODE SYNCED - Using client mode setting")
+                log_message("TOUCH MODE SYNCED - Using client mode setting")
             else:
-                print("NORMAL MODE SYNCED - Using client mode setting")
+                log_message("NORMAL MODE SYNCED - Using client mode setting")
     
     # Otherwise check for toggle
     elif (buttons & BTN_L) and (buttons & BTN_R) and (buttons & BTN_SELECT):
@@ -199,9 +267,9 @@ def handleMouse(touch_active, touch_x, touch_y, buttons, client_mode=None):
             touch_mode_last_toggle = current_time
             
             if touch_mode_active:
-                print("TOUCH MODE ACTIVATED - Optimized for real-time touch")
+                log_message("TOUCH MODE ACTIVATED - Optimized for real-time touch")
             else:
-                print("TOUCH MODE DEACTIVATED - Normal mode restored")
+                log_message("TOUCH MODE DEACTIVATED - Normal mode restored")
                 
             # Release any held mouse buttons when changing modes
             if mouse_l_pressed:
@@ -212,13 +280,16 @@ def handleMouse(touch_active, touch_x, touch_y, buttons, client_mode=None):
                 mouse_r_pressed = False
         return  # Skip normal processing on toggle
     
+    # Normalize touch coordinates first to account for calibration
+    norm_x, norm_y = normalize_touch_coordinate(touch_x, touch_y)
+    
     # COMPLETELY NEW APPROACH FOR TOUCH MODE
     # Instead of trying to track state ourselves, we'll let the client tell us
     # what's happening and just respond to touch_active directly
     if touch_mode_active:
-        # Process position first
-        target_x = int((touch_x / touch_width) * screen_width)
-        target_y = int((touch_y / touch_height) * screen_height)
+        # Process position first - map normalized coordinates directly to screen
+        target_x = int(norm_x * screen_width)
+        target_y = int(norm_y * screen_height)
         
         # Only update position if touch is active
         if touch_active:
@@ -247,13 +318,13 @@ def handleMouse(touch_active, touch_x, touch_y, buttons, client_mode=None):
             if not mouse_l_pressed:
                 pyautogui.mouseDown(button='left')
                 mouse_l_pressed = True
-                print("LEFT CLICK DOWN")
+                log_message("LEFT CLICK DOWN")
         elif not touch_active or r_button_pressed:
             # TOUCH NOT ACTIVE OR R PRESSED = LEFT MOUSE SHOULD BE UP
             if mouse_l_pressed:
                 pyautogui.mouseUp(button='left')
                 mouse_l_pressed = False
-                print("LEFT CLICK UP")
+                log_message("LEFT CLICK UP")
         
         # Handle right click with R button
         if touch_active and r_button_pressed:
@@ -261,13 +332,13 @@ def handleMouse(touch_active, touch_x, touch_y, buttons, client_mode=None):
             if not mouse_r_pressed:
                 pyautogui.mouseDown(button='right')
                 mouse_r_pressed = True
-                print("RIGHT CLICK DOWN")
+                log_message("RIGHT CLICK DOWN")
         elif not touch_active or not r_button_pressed:
             # NO TOUCH OR NO R = NO RIGHT CLICK
             if mouse_r_pressed:
                 pyautogui.mouseUp(button='right')
                 mouse_r_pressed = False
-                print("RIGHT CLICK UP")
+                log_message("RIGHT CLICK UP")
         
         # Reset if touch ended
         if not touch_active:
@@ -277,7 +348,7 @@ def handleMouse(touch_active, touch_x, touch_y, buttons, client_mode=None):
         # Skip normal processing
         return
     
-    # Normal mode processing (unchanged)
+    # Normal mode processing (with calibration adjustments)
     if touch_active:
         # Handle mouse buttons
         l_button_pressed = bool(buttons & BTN_L)
@@ -293,7 +364,7 @@ def handleMouse(touch_active, touch_x, touch_y, buttons, client_mode=None):
                 mouse_l_pressed = l_button_pressed
             except Exception as e:
                 if debug_mode:
-                    print(f"Mouse button error: {e}")
+                    log_message(f"Mouse button error: {e}")
         
         # Right mouse button (R button)
         if r_button_pressed != mouse_r_pressed:
@@ -305,7 +376,7 @@ def handleMouse(touch_active, touch_x, touch_y, buttons, client_mode=None):
                 mouse_r_pressed = r_button_pressed
             except Exception as e:
                 if debug_mode:
-                    print(f"Mouse button error: {e}")
+                    log_message(f"Mouse button error: {e}")
     else:
         # If touch is not active, ensure mouse buttons are released
         if mouse_l_pressed:
@@ -317,17 +388,18 @@ def handleMouse(touch_active, touch_x, touch_y, buttons, client_mode=None):
     
     # Handle mouse movement (separate from buttons)
     if touch_active and current_time - last_mouse_update >= mouse_update_interval:
-        # Scale touch screen coordinates to monitor resolution with scaling factor
-        center_x = touch_width / 2
-        center_y = touch_height / 2
+        # Map normalized coordinates to screen with scale factor
+        target_x = int(norm_x * screen_width)
+        target_y = int(norm_y * screen_height)
         
-        # Apply touch scale factor to make edges easier to reach
-        scaled_x = center_x + (touch_x - center_x) * touch_scale_factor
-        scaled_y = center_y + (touch_y - center_y) * touch_scale_factor
-        
-        # Map to screen coordinates
-        target_x = int((scaled_x / touch_width) * screen_width)
-        target_y = int((scaled_y / touch_height) * screen_height)
+        # Apply additional touch scale factor if needed
+        if touch_scale_factor != 1.0:
+            center_x = screen_width / 2
+            center_y = screen_height / 2
+            
+            # Scale around center of screen
+            target_x = center_x + (target_x - center_x) * touch_scale_factor
+            target_y = center_y + (target_y - center_y) * touch_scale_factor
         
         # Initialize last position if this is first touch
         if last_mouse_x is None:
@@ -349,7 +421,7 @@ def handleMouse(touch_active, touch_x, touch_y, buttons, client_mode=None):
                 last_mouse_x, last_mouse_y = smooth_x, smooth_y
         except Exception as e:
             if debug_mode:
-                print(f"Mouse button error: {e}")
+                log_message(f"Mouse button error: {e}")
         
         last_mouse_update = current_time
     
@@ -358,137 +430,153 @@ def handleMouse(touch_active, touch_x, touch_y, buttons, client_mode=None):
         last_mouse_x = None
         last_mouse_y = None
 
-def display_statistics():
-    """Display periodic statistics in a separate thread"""
+def log_message(message):
+    """Log a message to the GUI and console"""
+    print(message)
+    try:
+        info_text.config(state=tk.NORMAL)
+        info_text.insert(tk.END, f"{message}\n")
+        info_text.see(tk.END)  # Scroll to see the latest message
+        info_text.config(state=tk.DISABLED)
+        root.update_idletasks()  # Update the UI
+    except:
+        pass  # If the window is closed, we don't want to crash
+
+def update_stats():
+    """Update statistics display"""
     global last_stats_time, packet_count, last_packet_count
     
-    while True:
-        current_time = time.time()
-        if current_time - last_stats_time >= stats_interval:
-            packets_per_second = (packet_count - last_packet_count) / stats_interval
-            
-            # Format mouse position, handling None values
-            if last_mouse_x is None or last_mouse_y is None:
-                mouse_pos = "N/A"
-            else:
-                mouse_pos = f"{int(last_mouse_x)}, {int(last_mouse_y)}"
-            
-            print(f"Performance: {packets_per_second:.1f} packets/sec | Mouse pos: "
-                  f"{mouse_pos} | Buttons: L:{mouse_l_pressed} R:{mouse_r_pressed}")
-            
-            last_packet_count = packet_count
-            last_stats_time = current_time
-            
-            # No auto-release here - we're handling it in main loop
+    current_time = time.time()
+    if current_time - last_stats_time >= stats_interval:
+        packets_per_second = (packet_count - last_packet_count) / stats_interval
         
-        time.sleep(1)
+        # Format mouse position, handling None values
+        if last_mouse_x is None or last_mouse_y is None:
+            mouse_pos = "N/A"
+        else:
+            mouse_pos = f"{int(last_mouse_x)}, {int(last_mouse_y)}"
+        
+        status_text = f"Performance: {packets_per_second:.1f} packets/sec | Mouse pos: {mouse_pos} | Buttons: L:{mouse_l_pressed} R:{mouse_r_pressed}"
+        log_message(status_text)
+        status_display.set(status_text)
+        
+        last_packet_count = packet_count
+        last_stats_time = current_time
+    
+    # Schedule the next update
+    root.after(1000, update_stats)
 
-# UDP socket setup
-try:
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 8192)  # Larger receive buffer
-    sock.bind((host, port))
-    print(f"UDP server listening on {host}:{port}")
-except Exception as e:
-    print(f"Socket setup error: {e}")
-    exit(1)
-
-# Client tracking dictionary
-clients = {}
-
-# Initialize stats
-last_stats_time = time.time()
-
-# Start stats display thread if enabled
-if display_stats:
-    stats_thread = threading.Thread(target=display_statistics, daemon=True)
-    stats_thread.start()
-
-# Main server loop
-print("\n3DS Controller Server Running")
-print("----------------------------")
-print("- Buttons and D-pad mapped to vJoy buttons 1-12")
-print("- Circle pad mapped to X/Y axes with angle compensation")
-print("- Touchscreen controls mouse movement")
-print("- L button = left mouse click")
-print("- R button = right click (in normal mode) or right mouse click (in touch mode)")
-print("- L+R+Select = Toggle Touch Mode (optimized real-time touch)")
-print("Ready for connections...\n")
-
-while True:
+def server_loop():
+    """Main server loop function - runs in a separate thread"""
+    global packet_count, clients
+    
+    # UDP socket setup
     try:
-        data, addr = sock.recvfrom(1024)
-        if not data:
-            continue
-        
-        # Count packet for statistics
-        packet_count += 1
-        
-        # Convert bytes to string
-        data_str = data.decode('utf-8')
-        
-        # Check if disconnect message
-        if data_str == "d":
-            if addr in clients:
-                print(f"Client disconnected: {addr[0]}:{addr[1]}")
-                
-                # Clean up when client disconnects
-                if mouse_l_pressed:
-                    pyautogui.mouseUp(button='left')
-                    mouse_l_pressed = False
-                if mouse_r_pressed:
-                    pyautogui.mouseUp(button='right')
-                    mouse_r_pressed = False
-                
-                del clients[addr]
-            continue
-        
-        # Parse the input data
-        match = pattern.match(data_str)
-        if match:
-            if addr not in clients:
-                # New client
-                client_id = len(clients)
-                clients[addr] = {
-                    'id': client_id,
-                    'mode': False,
-                    'last_active': time.time()  # Track client activity
-                }
-                offsetB = client_id * buttonsPerClient
-                offsetA = client_id * axisPerClient
-                print(f"New client: {addr[0]}:{addr[1]} (ID: {client_id})")
-            else:
-                client_id = clients[addr]['id']
-                offsetB = client_id * buttonsPerClient
-                offsetA = client_id * axisPerClient
-            
-            # Parse values from the input string
-            buttons = int(match.group(1))
-            cpad_x = int(match.group(2))
-            cpad_y = int(match.group(3))
-            touch_active = int(match.group(4)) == 1
-            touch_x = int(match.group(5))
-            touch_y = int(match.group(6))
-            client_mode = int(match.group(7)) == 1  # Parse mode (1=touch, 0=normal)
-            
-            # Update client mode
-            clients[addr]['mode'] = client_mode
-            
-            # Process button inputs first
-            setButtons(buttons, offsetB)
-
-            # Apply angle compensation to circle pad values
-            compensated_x, compensated_y = compensate_circle_pad(cpad_x, cpad_y)
-            
-            # Now set the compensated axis values
-            setAxis(1 + offsetA, compensated_x)
-            setAxis(2 + offsetA, 32768 - compensated_y)  # Invert Y-axis
-            
-            # Handle mouse separately
-            handleMouse(touch_active, touch_x, touch_y, buttons, client_mode)
-            
-            # Force vJoy update
-            j.update()
-        
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 8192)  # Larger receive buffer
+        sock.bind((host, port))
+        log_message(f"UDP server listening on {host}:{port}")
     except Exception as e:
-        print(f"Error in main loop: {e}")
+        log_message(f"Socket setup error: {e}")
+        return
+    
+    # Main loop
+    while True:
+        try:
+            data, addr = sock.recvfrom(1024)
+            if not data:
+                continue
+            
+            # Count packet for statistics
+            packet_count += 1
+            
+            # Convert bytes to string
+            data_str = data.decode('utf-8')
+            
+            # Check if disconnect message
+            if data_str == "d":
+                if addr in clients:
+                    log_message(f"Client disconnected: {addr[0]}:{addr[1]}")
+                    
+                    # Clean up when client disconnects
+                    if mouse_l_pressed:
+                        pyautogui.mouseUp(button='left')
+                        mouse_l_pressed = False
+                    if mouse_r_pressed:
+                        pyautogui.mouseUp(button='right')
+                        mouse_r_pressed = False
+                    
+                    del clients[addr]
+                continue
+            
+            # Parse the input data
+            match = pattern.match(data_str)
+            if match:
+                if addr not in clients:
+                    # New client
+                    client_id = len(clients)
+                    clients[addr] = {
+                        'id': client_id,
+                        'mode': False,
+                        'last_active': time.time()  # Track client activity
+                    }
+                    offsetB = client_id * buttonsPerClient
+                    offsetA = client_id * axisPerClient
+                    log_message(f"New client: {addr[0]}:{addr[1]} (ID: {client_id})")
+                    status_display.set(f"Connected to: {addr[0]}:{addr[1]}")
+                else:
+                    client_id = clients[addr]['id']
+                    offsetB = client_id * buttonsPerClient
+                    offsetA = client_id * axisPerClient
+                
+                # Parse values from the input string
+                buttons = int(match.group(1))
+                cpad_x = int(match.group(2))
+                cpad_y = int(match.group(3))
+                touch_active = int(match.group(4)) == 1
+                touch_x = int(match.group(5))
+                touch_y = int(match.group(6))
+                client_mode = int(match.group(7)) == 1  # Parse mode (1=touch, 0=normal)
+                
+                # Update client mode
+                clients[addr]['mode'] = client_mode
+                
+                # Process button inputs first
+                setButtons(buttons, offsetB)
+    
+                # Apply angle compensation to circle pad values
+                compensated_x, compensated_y = compensate_circle_pad(cpad_x, cpad_y)
+                
+                # Now set the compensated axis values
+                setAxis(1 + offsetA, compensated_x)
+                setAxis(2 + offsetA, 32768 - compensated_y)  # Invert Y-axis
+                
+                # Handle mouse separately
+                handleMouse(touch_active, touch_x, touch_y, buttons, client_mode)
+                
+                # Force vJoy update
+                j.update()
+                
+                # Update client timestamp
+                clients[addr]['last_active'] = time.time()
+            
+        except Exception as e:
+            log_message(f"Error in main loop: {e}")
+            # Don't break the loop for errors
+
+# Start the server in a separate thread
+server_thread = threading.Thread(target=server_loop, daemon=True)
+server_thread.start()
+
+# Start the stats update
+update_stats()
+
+# Start the GUI main loop
+try:
+    root.mainloop()
+except:
+    # Clean up on exit
+    if mouse_l_pressed:
+        pyautogui.mouseUp(button='left')
+    if mouse_r_pressed:
+        pyautogui.mouseUp(button='right')
