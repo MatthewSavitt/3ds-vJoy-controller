@@ -26,7 +26,7 @@ For educational purposes only.
 # Getting the 3DS application
 
 ## From Releases
-Go over to the releases and download the binary
+Go over to the releases and download the binary (.3dsx) file. The newest version offers a shortcut for adding text with the 3ds' built-in  keyboard feature, and TOUCH MODE, which switches to a higher-packet-sending ds-stylus-style pentablet version of the app. To use it with the server, run the edition of the python server, labeled "serverTouchKeyboard.py".
 
 ## By building yourself
 `cd 3ds && make`
@@ -41,7 +41,8 @@ Go over to the releases and download the binary
 2. Start the server using `python3 server.py`
 3. Start the application on your 3DS devices
 4. Enter the IP of the server
-5. Profit
+5. ??????
+6. Profit
 
 # Protocol
 ![Protocol](assets/protocol.svg)
@@ -87,5 +88,5 @@ The data is sent in the following format:
     -mouse_smoothing: Mouse movement smoothing (0-1)
     -mouse_update_interval: Mouse update rate in seconds
     -touch_scale_factor: Touch screen scaling
-    -debug_mode: Enable/disable debug output
+    -debug_mode: Enable/disable debug output (offers more messages to send when you press 3ds buttons, and extra messages besides that as well)
     -display_stats: Enable/disable performance statistics
