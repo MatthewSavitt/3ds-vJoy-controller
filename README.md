@@ -23,6 +23,9 @@ For educational purposes only.
 - [vJoy](https://github.com/shauleiz/vJoy)
 - Python
   - `pyvjoy`-Library
+  - `pyautogui`-Library
+  - `keyboard`-Library
+- Installing vJoy
 ## Build-Requirements
 - [devkitARM](https://devkitpro.org/wiki/Getting_Started)
 # Getting the 3DS application
