@@ -97,7 +97,7 @@ you can use the touch x and touch y to calibrate your current screen's calibrati
 -Configuration
   -Configure these settings in the server script:
 
-    -mouse_smoothing: Mouse movement smoothing (0-1)
+    -mouse_smoothing: Mouse movement smoothing (0-1). currently set at 0.5
     -mouse_update_interval: Mouse update rate in seconds
     -touch_scale_factor: Touch screen scaling
     -debug_mode: Enable/disable debug output (offers more messages to send when you press 3ds buttons, and extra messages besides that as well)
