@@ -2,15 +2,15 @@
 This project allows anybody with one (or more) 3DS and vJoy to use their device(s) as a singular, coherent controller.
 When a 3DS joins the server (running on the system where the button inputs are wanted), it will be assigned the next available buttons and axes on the virtual controller and update those depending on which buttons are pressed on the 3DS. This version offers faster fire-and-forget UDP connection while offering support for a wider array of inputs, including a rudimentary mouse using the touchscreen and L and R buttons, and a konami code to exit the application without removing ability to use the start button as a controller input. 
 
-Maps all 3DS buttons to vJoy virtual joystick buttons
-Circle pad controls mapped to vJoy X/Y axes with angle compensation
-Touchscreen controls mouse movement
-L/R buttons control mouse clicks when touchscreen is active
-Pressing L+R+START shows keyboard
-Pressing L+R+SELECT toggles between modes (controller/normal mode and touch mode)
-Optimized for low latency with UDP communication
-Support for multiple client connections
-Performance statistics display
+ - Maps all 3DS buttons to vJoy virtual joystick buttons
+ - Circle pad controls mapped to vJoy X/Y axes with angle compensation
+ - Touchscreen controls mouse movement
+ - L/R buttons control mouse clicks when touchscreen is active
+ - Pressing L+R+START shows keyboard
+ - Pressing L+R+SELECT toggles between modes (controller/normal mode and touch mode)
+ - Optimized for low latency with UDP communication
+ - Support for multiple client connections
+ - Performance statistics display
 
 Focus of the project is the simple protocol and the extensibility for different devices. Number of buttons and axes can be dynamic, depending on which device class is preferred.
 
