@@ -70,7 +70,7 @@ you can use the touch x and touch y to calibrate your current screen's calibrati
  - touch_max_x = 314
  - touch_min_y = 5
  - touch_max_y = 234
- - please adjust these to your optimal settings. They are found in serverTouchKeyboard.py, near the top. Edit using a program such as idle or sublime text.
+ - please adjust these to your optimal settings. They are found in serverTouchKeyboard.py, near the top. Edit using a program such as IDLE or Sublime Text.
    
 <buttons; cpad x; cpad y; touch active?; touch x; touch y>
 - First integer will be interpreted as pressed buttons binary formatted
