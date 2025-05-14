@@ -38,7 +38,7 @@ touch_scale_factor = 0.95  # Reduce travel distance slightly for easier access t
 
 # Touch mode settings
 touch_mode_active = False
-touch_mode_smoothing = 0.4  # Much less smoothing for responsiveness
+touch_mode_smoothing = 0.5  # Much less smoothing for responsiveness
 touch_mode_update_interval = 0.0083  # 120fps theoretical
 touch_mode_scale_factor = 1.0  # No scaling - direct mapping
 
