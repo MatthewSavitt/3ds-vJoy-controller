@@ -6,6 +6,8 @@ Maps all 3DS buttons to vJoy virtual joystick buttons
 Circle pad controls mapped to vJoy X/Y axes with angle compensation
 Touchscreen controls mouse movement
 L/R buttons control mouse clicks when touchscreen is active
+Pressing L+R+START shows keyboard
+Pressing L+R+SELECT toggles between modes (controller/normal mode and touch mode)
 Optimized for low latency with UDP communication
 Support for multiple client connections
 Performance statistics display
