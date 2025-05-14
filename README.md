@@ -65,6 +65,12 @@ The data is sent in the following format:
 ```plaintext
 <4; 17408; 16998; 1; 212; 300>
 ```
+you can use the touch x and touch y to calibrate your current screen's calibration to the server's monitor, for my 3ds, they currently are:
+ - touch_min_x = 5
+ - touch_max_x = 314
+ - touch_min_y = 5
+ - touch_max_y = 234
+please adjust these to your optimal settings.
 <buttons; cpad x; cpad y; touch active?; touch x; touch y>
 - First integer will be interpreted as pressed buttons binary formatted
   - 4 = 00000000100
