@@ -2,13 +2,15 @@
 This project allows anybody with one (or more) 3DS and vJoy to use their device(s) as a singular, coherent controller.
 When a 3DS joins the server (running on the system where the button inputs are wanted), it will be assigned the next available buttons and axes on the virtual controller and update those depending on which buttons are pressed on the 3DS. This version offers faster fire-and-forget UDP connection while offering support for a wider array of inputs, including a rudimentary mouse using the touchscreen and L and R buttons, and a konami code to exit the application without removing ability to use the start button as a controller input. 
 
-Maps all 3DS buttons to vJoy virtual joystick buttons
-Circle pad controls mapped to vJoy X/Y axes with angle compensation
-Touchscreen controls mouse movement
-L/R buttons control mouse clicks when touchscreen is active
-Optimized for low latency with UDP communication
-Support for multiple client connections
-Performance statistics display
+ - Maps all 3DS buttons to vJoy virtual joystick buttons
+ - Circle pad controls mapped to vJoy X/Y axes with angle compensation
+ - Touchscreen controls mouse movement
+ - L/R buttons control mouse clicks when touchscreen is active
+ - Pressing L+R+START shows keyboard
+ - Pressing L+R+SELECT toggles between modes (controller/normal mode and touch mode)
+ - Optimized for low latency with UDP communication
+ - Support for multiple client connections
+ - Performance statistics display
 
 Focus of the project is the simple protocol and the extensibility for different devices. Number of buttons and axes can be dynamic, depending on which device class is preferred.
 
@@ -21,12 +23,15 @@ For educational purposes only.
 - [vJoy](https://github.com/shauleiz/vJoy)
 - Python
   - `pyvjoy`-Library
+  - `pyautogui`-Library
+  - `keyboard`-Library
+- Installing vJoy
 ## Build-Requirements
 - [devkitARM](https://devkitpro.org/wiki/Getting_Started)
 # Getting the 3DS application
 
 ## From Releases
-Go over to the releases and download the binary
+Go over to the releases and download the binary (.3dsx) file. The newest version offers a shortcut for adding text with the 3ds' built-in  keyboard feature, and TOUCH MODE, which switches to a higher-packet-sending ds-stylus-style pentablet version of the app. To use it with the server, run the edition of the python server, labeled "serverTouchKeyboard.py".
 
 ## By building yourself
 `cd 3ds && make`
@@ -41,7 +46,8 @@ Go over to the releases and download the binary
 2. Start the server using `python3 server.py`
 3. Start the application on your 3DS devices
 4. Enter the IP of the server
-5. Profit
+5. ??????
+6. Profit
 
 # Protocol
 ![Protocol](assets/protocol.svg)
@@ -58,8 +64,15 @@ The data is sent in the following format:
 ## Example
 ```plaintext
 <4; 17408; 16998; 1; 212; 300>
+// <buttons; cpad x; cpad y; touch active?; touch x; touch y>
 ```
-<buttons; cpad x; cpad y; touch active?; touch x; touch y>
+you can use the touch x and touch y to calibrate your current screen's calibration to the server's monitor, for my 3ds, they currently are:
+ - touch_min_x = 5
+ - touch_max_x = 314
+ - touch_min_y = 5
+ - touch_max_y = 234
+ - please adjust these to your optimal settings. They are found in serverTouchKeyboard.py, near the top. Edit using a program such as IDLE or Sublime Text.
+   
 - First integer will be interpreted as pressed buttons binary formatted
   - 4 = 00000000100
     - 0 = A
@@ -84,8 +97,8 @@ The data is sent in the following format:
 -Configuration
   -Configure these settings in the server script:
 
-    -mouse_smoothing: Mouse movement smoothing (0-1)
+    -mouse_smoothing: Mouse movement smoothing (0-1). currently set at 0.5
     -mouse_update_interval: Mouse update rate in seconds
     -touch_scale_factor: Touch screen scaling
-    -debug_mode: Enable/disable debug output
+    -debug_mode: Enable/disable debug output (offers more messages to send when you press 3ds buttons, and extra messages besides that as well)
     -display_stats: Enable/disable performance statistics
