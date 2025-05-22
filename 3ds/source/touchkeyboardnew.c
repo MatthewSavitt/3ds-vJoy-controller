@@ -47,6 +47,13 @@
 #define MAX_SEND_RETRIES 3         // Try sending important packets multiple times
 #define SEND_RETRY_DELAY 5000000   // 5ms between retries
 
+#define TOUCH_START_RELIABILITY 2  // Only use 2 retries for initial touch (instead of MAX_SEND_RETRIES)
+#define TOUCH_START_RETRY_DELAY 2000000  // 2ms between retries for touch start (instead of 5ms)
+
+
+bool touch_just_started = false;  // Track when touch has just begun
+
+
 static u32 *SOC_buffer = NULL;
 s32 sock = -1, csock = -1;
 struct sockaddr_in serverAddr;
@@ -226,15 +233,130 @@ void buttonsToString(u32 keys, circlePosition pos, touchPosition touch, char* bu
             touch_mode_active ? 1 : 0);  // Add mode parameter
 }
 
-// Function to send reliable packets for critical information
-void sendReliablePacket(const char* packet, size_t length) {
+void sendReliablePacket(const char* packet, size_length, bool is_touch_start) {
+    // For touch start events, use fewer retries and shorter delay
+    int retries = is_touch_start ? TOUCH_START_RELIABILITY : MAX_SEND_RETRIES;
+    u64 delay = is_touch_start ? TOUCH_START_RETRY_DELAY : SEND_RETRY_DELAY;
+    
     // Send the packet multiple times to ensure delivery
-    for (int i = 0; i < MAX_SEND_RETRIES; i++) {
+    for (int i = 0; i < retries; i++) {
         sendto(sock, packet, length, 0, (struct sockaddr*)&serverAddr, sizeof(serverAddr));
         
         // Short delay between retries to avoid congestion but ensure delivery
-        if (i < MAX_SEND_RETRIES - 1) {
-            svcSleepThread(SEND_RETRY_DELAY);
+        if (i < retries - 1) {
+            svcSleepThread(delay);
+        }
+    }
+}
+
+// Find this section in the main loop:
+if (shouldSendUpdate) {
+    // Update last states
+    lastKeys = keys;
+    lastPos = pos;
+    lastTouch = touch;
+    lastTouchActive = touchActive;
+    
+    // Create formatted input string
+    buttonsToString(keys, pos, touch, buttons);
+    
+    // Check if touch just started (this is new)
+    bool is_touch_start = touchActive && !lastTouchActive;
+    
+    // If touch just started, set the flag
+    if (is_touch_start) {
+        touch_just_started = true;
+        printf("Touch started\n");
+    } else if (!touchActive && lastTouchActive) {
+        // Touch just ended
+        touch_just_started = false;
+    }
+    
+    // Send updated button data with extra reliability for touch events
+    if (touch_mode_active && touchActive) {
+        // In touch mode, use special reliability for initial touch
+        // but normal send for continued touch to reduce lag
+        if (is_touch_start) {
+            // Use modified reliability for touch start
+            sendReliablePacket(buttons, strlen(buttons), true);
+        } else {
+            // For continued touch, just send normally to reduce lag
+            sendto(sock, buttons, strlen(buttons), 0, 
+                (struct sockaddr*)&serverAddr, sizeof(serverAddr));
+        }
+    } else if (touch_mode_active && !touchActive && lastTouchActive) {
+        // When touch ends, send reliably to ensure mouse up happens
+        sendReliablePacket(buttons, strlen(buttons), false);
+    } else {
+        // Regular sends for non-critical updates
+        int sent = sendto(sock, buttons, strlen(buttons), 0,
+                    (struct sockaddr*)&serverAddr, sizeof(serverAddr));
+                    
+        // Console output handling (unchanged)
+        if (currentTime - lastConsoleUpdate > CONSOLE_UPDATE_INTERVAL) {
+            if (sent < 0) {
+                printf("Send error: %d - %s\n", errno, strerror(errno));
+            } else if (!touchActive || !(keys & (KEY_L | KEY_R))) {
+                // Only print for non-touch or when not clicking to reduce spam
+                printf("Sent: %s\n", buttons);
+            }
+            lastConsoleUpdate = currentTime;
+        }
+    }
+}
+
+// Find this section in the main loop:
+if (shouldSendUpdate) {
+    // Update last states
+    lastKeys = keys;
+    lastPos = pos;
+    lastTouch = touch;
+    lastTouchActive = touchActive;
+    
+    // Create formatted input string
+    buttonsToString(keys, pos, touch, buttons);
+    
+    // Check if touch just started (this is new)
+    bool is_touch_start = touchActive && !lastTouchActive;
+    
+    // If touch just started, set the flag
+    if (is_touch_start) {
+        touch_just_started = true;
+        printf("Touch started\n");
+    } else if (!touchActive && lastTouchActive) {
+        // Touch just ended
+        touch_just_started = false;
+    }
+    
+    // Send updated button data with extra reliability for touch events
+    if (touch_mode_active && touchActive) {
+        // In touch mode, use special reliability for initial touch
+        // but normal send for continued touch to reduce lag
+        if (is_touch_start) {
+            // Use modified reliability for touch start
+            sendReliablePacket(buttons, strlen(buttons), true);
+        } else {
+            // For continued touch, just send normally to reduce lag
+            sendto(sock, buttons, strlen(buttons), 0, 
+                (struct sockaddr*)&serverAddr, sizeof(serverAddr));
+        }
+    } else if (touch_mode_active && !touchActive && lastTouchActive) {
+        // When touch ends, send reliably to ensure mouse up happens
+        sendReliablePacket(buttons, strlen(buttons), false);
+    } else {
+        // Regular sends for non-critical updates
+        int sent = sendto(sock, buttons, strlen(buttons), 0,
+                    (struct sockaddr*)&serverAddr, sizeof(serverAddr));
+                    
+        // Console output handling (unchanged)
+        if (currentTime - lastConsoleUpdate > CONSOLE_UPDATE_INTERVAL) {
+            if (sent < 0) {
+                printf("Send error: %d - %s\n", errno, strerror(errno));
+            } else if (!touchActive || !(keys & (KEY_L | KEY_R))) {
+                // Only print for non-touch or when not clicking to reduce spam
+                printf("Sent: %s\n", buttons);
+            }
+            lastConsoleUpdate = currentTime;
         }
     }
 }
