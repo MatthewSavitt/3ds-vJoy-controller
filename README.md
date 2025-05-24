@@ -31,7 +31,7 @@ For educational purposes only.
 # Getting the 3DS application
 
 ## From Releases
-Go over to the releases and download the binary (.3dsx) file. The newest version offers a shortcut for adding text with the 3ds' built-in  keyboard feature, and TOUCH MODE, which switches to a higher-packet-sending ds-stylus-style pentablet version of the app. To use it with the server, run the edition of the python server, labeled "serverTouchKeyboard.py".
+Go over to the releases and download the binary (.3dsx) file. The newest version offers a shortcut for adding text with the 3ds' built-in  keyboard feature, and TOUCH MODE, which switches to a higher-packet-sending ds-stylus-style pentablet version of the app. To use it with the server, run the edition of the python server, labeled "serverTouchKeyboardCurlFix.py". The "curl fix"-labeled files are the newest, most responsive version.
 
 ## By building yourself
 `cd 3ds && make`
